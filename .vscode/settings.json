@@ -1,0 +1,8 @@
+{
+  "files.associations": {
+    "*.jsx": "javascriptreact"
+  },
+  "emmet.includeLanguages": {
+    "javascriptreact": "html"
+  }
+}
