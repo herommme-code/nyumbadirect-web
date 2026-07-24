@@ -1,4 +1,6 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
+// Netlify environment variables are embedded at build time. Support the
+// existing VITE_API_URL setting as well as the documented VITE_API_BASE_URL.
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '/api'
 const API_ORIGIN = new URL(API_BASE_URL, window.location.origin).origin
 
 const headers = {
