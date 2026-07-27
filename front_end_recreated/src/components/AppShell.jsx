@@ -605,6 +605,8 @@ export default function AppShell({sessionEmail = '', onLogout}) {
   const [sellerMode, setSellerMode] = useState(false)
   const [profile, setProfile] = useState(() => sessionEmail ? loadStoredJson(accountKey(sessionEmail, 'profile'), defaultProfile) : defaultProfile)
   const [profilePhoto, setProfilePhoto] = useState(profile.profilePhotoUrl || '')
+  const [sellerListingsStatus, setSellerListingsStatus] = useState({state: 'loading', message: 'Loading your properties...'})
+  const sellerListingsRequestRef = useRef(false)
 
   useEffect(() => {
     const updateSharedProperty = () => setSharedPropertyId(sharedPropertyIdFromHash())
@@ -673,31 +675,44 @@ export default function AppShell({sessionEmail = '', onLogout}) {
   useEffect(() => {
     if (!sessionEmail) return
     let active = true
+    let requestController = null
 
     const syncAccountFromServer = async () => {
+      // A slow request must not be joined by a timer tick or a visibility event.
+      if (sellerListingsRequestRef.current) return
+      sellerListingsRequestRef.current = true
+      requestController = new AbortController()
       const storedProfile = loadStoredJson(accountKey(sessionEmail, 'profile'), defaultProfile)
       const storedListings = withoutDemoListings(loadStoredJson(accountKey(sessionEmail, 'seller_listings'), []))
       setProfile(storedProfile)
       setProfilePhoto(storedProfile.profilePhotoUrl || '')
       if (storedListings.length) setAccountListings(storedListings)
+      setSellerListingsStatus({state: 'loading', message: 'Loading your properties...'})
 
-      const [profileResult, listingsResult] = await Promise.allSettled([
-        fetchProfile(sessionEmail),
-        fetchSellerListings(sessionEmail),
-      ])
+      try {
+        const [profileResult, listingsResult] = await Promise.allSettled([
+          fetchProfile(sessionEmail),
+          fetchSellerListings(sessionEmail, {signal: requestController.signal}),
+        ])
 
-      if (!active) return
+        if (!active) return
 
-      if (profileResult.status === 'fulfilled') {
-        setProfile(profileResult.value)
-        setProfilePhoto(profileResult.value.profilePhotoUrl || '')
-        saveStoredJson(accountKey(sessionEmail, 'profile'), profileResult.value)
-      }
+        if (profileResult.status === 'fulfilled') {
+          setProfile(profileResult.value)
+          setProfilePhoto(profileResult.value.profilePhotoUrl || '')
+          saveStoredJson(accountKey(sessionEmail, 'profile'), profileResult.value)
+        }
 
-      if (listingsResult.status === 'fulfilled') {
-        const serverListings = withoutDemoListings(listingsResult.value)
-        setAccountListings(serverListings)
-        saveStoredJson(accountKey(sessionEmail, 'seller_listings'), serverListings)
+        if (listingsResult.status === 'fulfilled') {
+          const serverListings = withoutDemoListings(listingsResult.value)
+          setAccountListings(serverListings)
+          saveStoredJson(accountKey(sessionEmail, 'seller_listings'), serverListings)
+          setSellerListingsStatus({state: 'live', message: 'Your properties are up to date.'})
+        } else if (listingsResult.reason?.name !== 'AbortError') {
+          setSellerListingsStatus({state: 'error', message: listingsResult.reason?.message || 'Could not load your properties. Showing the last saved list.'})
+        }
+      } finally {
+        sellerListingsRequestRef.current = false
       }
     }
 
@@ -711,6 +726,7 @@ export default function AppShell({sessionEmail = '', onLogout}) {
     document.addEventListener('visibilitychange', handleVisibility)
     return () => {
       active = false
+      requestController?.abort()
       window.clearInterval(timer)
       document.removeEventListener('visibilitychange', handleVisibility)
     }
@@ -998,10 +1014,10 @@ export default function AppShell({sessionEmail = '', onLogout}) {
 
   const pages = [
     sellerMode
-      ? <SellerScreen listings={accountListings} setListings={setAccountListings} initialView="dashboard" sessionEmail={sessionEmail} profile={profile} openListing={openListingDetails} onListingsSynced={syncSellerWorkspace} onPublicListingUpdate={updatePublicListing} onOpenPropertiesTab={() => setSelected(1)} refreshPublicListings={refreshPublicListingsFromServer} />
+      ? <SellerScreen listings={accountListings} setListings={setAccountListings} listingsStatus={sellerListingsStatus} initialView="dashboard" sessionEmail={sessionEmail} profile={profile} openListing={openListingDetails} onListingsSynced={syncSellerWorkspace} onPublicListingUpdate={updatePublicListing} onOpenPropertiesTab={() => setSelected(1)} refreshPublicListings={refreshPublicListingsFromServer} />
       : <HomeScreen listings={sellerListings} setSelected={setSelected} setQuery={setQuery} saved={saved} toggleSaved={toggleSaved} openListing={openListingDetails} dataStatus={dataStatus} dataMessage={dataMessage} />,
     sellerMode
-      ? <SellerScreen listings={accountListings} setListings={setAccountListings} initialView="properties" sessionEmail={sessionEmail} profile={profile} openListing={openListingDetails} onListingsSynced={syncSellerWorkspace} onPublicListingUpdate={updatePublicListing} refreshPublicListings={refreshPublicListingsFromServer} />
+      ? <SellerScreen listings={accountListings} setListings={setAccountListings} listingsStatus={sellerListingsStatus} initialView="properties" sessionEmail={sessionEmail} profile={profile} openListing={openListingDetails} onListingsSynced={syncSellerWorkspace} onPublicListingUpdate={updatePublicListing} refreshPublicListings={refreshPublicListingsFromServer} />
       : <SearchScreen query={query} setQuery={setQuery} listings={filteredListings} saved={saved} toggleSaved={toggleSaved} openListing={openListingDetails} openMap={() => openMapForListing(filteredListings.find(hasMapLocation) || sellerListings.find(hasMapLocation))} dataStatus={dataStatus} dataMessage={dataMessage} />,
     <MapScreen listings={sellerListings} setSelected={setSelected} activeListing={activeListing} setActiveListing={setActiveListing} />,
     <SavedScreen listings={sellerListings.filter((listing) => saved.has(listing.id))} saved={saved} toggleSaved={toggleSaved} openListing={openListingDetails} />,
@@ -1018,7 +1034,7 @@ export default function AppShell({sessionEmail = '', onLogout}) {
       onInitialContactHandled={() => setPendingChatContact(null)}
       onBack={() => setSelected(6)}
     />,
-    <SellerScreen listings={accountListings} setListings={setAccountListings} sessionEmail={sessionEmail} profile={profile} openListing={openListingDetails} onListingsSynced={syncSellerWorkspace} onPublicListingUpdate={updatePublicListing} onOpenPropertiesTab={() => setSelected(1)} refreshPublicListings={refreshPublicListingsFromServer} />,
+    <SellerScreen listings={accountListings} setListings={setAccountListings} listingsStatus={sellerListingsStatus} sessionEmail={sessionEmail} profile={profile} openListing={openListingDetails} onListingsSynced={syncSellerWorkspace} onPublicListingUpdate={updatePublicListing} onOpenPropertiesTab={() => setSelected(1)} refreshPublicListings={refreshPublicListingsFromServer} />,
     <ProfileScreen
       sellerMode={sellerMode}
       setSellerMode={handleSellerModeChanged}
@@ -1641,7 +1657,7 @@ function ChatScreen({listings, sessionEmail, conversations, setConversations, un
   )
 }
 
-function SellerScreen({listings, setListings, initialView = 'dashboard', sessionEmail = '', profile = defaultProfile, openListing, onListingsSynced, onPublicListingUpdate, onOpenPropertiesTab, refreshPublicListings}) {
+function SellerScreen({listings, setListings, listingsStatus, initialView = 'dashboard', sessionEmail = '', profile = defaultProfile, openListing, onListingsSynced, onPublicListingUpdate, onOpenPropertiesTab, refreshPublicListings}) {
   const [view, setView] = useState(initialView)
   const [editingListing, setEditingListing] = useState(null)
   const [uploadPurpose, setUploadPurpose] = useState('')
@@ -1655,25 +1671,6 @@ function SellerScreen({listings, setListings, initialView = 'dashboard', session
     setUploadReturnView(initialView)
     setSubmissionResult(null)
   }, [initialView])
-
-  useEffect(() => {
-    if (!sessionEmail || (view !== 'dashboard' && view !== 'properties')) return
-    let active = true
-    fetchSellerListings(sessionEmail)
-      .then((serverListings) => {
-        if (!active || !serverListings.length) return
-        const cleanServerListings = withoutDemoListings(serverListings)
-        if (!cleanServerListings.length) return
-        setListings(cleanServerListings)
-        onListingsSynced?.(cleanServerListings)
-      })
-      .catch(() => {
-        // Keep the current workspace if the hosted server is temporarily unreachable.
-      })
-    return () => {
-      active = false
-    }
-  }, [sessionEmail, view, setListings])
 
   const openUploadFlow = (returnView = view) => {
     setEditingListing(null)
@@ -1693,7 +1690,7 @@ function SellerScreen({listings, setListings, initialView = 'dashboard', session
 
   const sellerViews = {
     dashboard: <SellerDashboard listings={listings} setView={setView} onUpload={() => openUploadFlow('dashboard')} onOpenProperties={onOpenPropertiesTab} />,
-    properties: <SellerProperties listings={listings} setListings={setListings} setView={setView} onUpload={() => openUploadFlow('properties')} onEdit={openEditFlow} sessionEmail={sessionEmail} openListing={openListing} onListingsSynced={onListingsSynced} refreshPublicListings={refreshPublicListings} />,
+    properties: <SellerProperties listings={listings} setListings={setListings} listingsStatus={listingsStatus} setView={setView} onUpload={() => openUploadFlow('properties')} onEdit={openEditFlow} sessionEmail={sessionEmail} openListing={openListing} onListingsSynced={onListingsSynced} refreshPublicListings={refreshPublicListings} />,
     add: <PropertyPurposeSelectionScreen setView={setView} setUploadPurpose={setUploadPurpose} setEditingListing={setEditingListing} returnView={uploadReturnView} />,
     form: <AddPropertyScreen setView={setView} setListings={setListings} initialPurpose={uploadPurpose || 'Rent'} editingListing={editingListing} returnView={uploadReturnView} sessionEmail={sessionEmail} profile={profile} onListingsSynced={onListingsSynced} onPublicListingUpdate={onPublicListingUpdate} refreshPublicListings={refreshPublicListings} onSaved={setSubmissionResult} />,
     success: <PropertyPublishSuccessScreen result={submissionResult} setView={setView} onUpload={() => openUploadFlow('dashboard')} />,
@@ -1807,7 +1804,7 @@ function SellerDashboardActions({onUpload, onSubscription}) {
   )
 }
 
-function SellerProperties({listings, setListings, setView, onUpload, onEdit, sessionEmail, openListing, onListingsSynced, refreshPublicListings}) {
+function SellerProperties({listings, setListings, listingsStatus, setView, onUpload, onEdit, sessionEmail, openListing, onListingsSynced, refreshPublicListings}) {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('')
   const [toast, setToast] = useState('')
@@ -1868,6 +1865,8 @@ function SellerProperties({listings, setListings, setView, onUpload, onEdit, ses
   return (
     <>
       <PageTitle title="My Properties" subtitle="Manage listings you have posted, update details, and track their status." />
+      {listingsStatus?.state === 'loading' && <p className="data-status-message">{listingsStatus.message}</p>}
+      {listingsStatus?.state === 'error' && <p className="data-status-message error">{listingsStatus.message}</p>}
       <SearchBar value={search} onChange={setSearch} placeholder="Search your posted properties" />
       <div className="seller-filter-actions">
         <div className="seller-filter-row">

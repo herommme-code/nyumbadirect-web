@@ -140,9 +140,9 @@ export async function removeProfilePhoto(email) {
   return authResultFromPayload(payload, email).profile
 }
 
-export async function fetchSellerListings(email) {
+export async function fetchSellerListings(email, {signal} = {}) {
   const sellerEmail = email.trim()
-  const response = await fetch(apiUrl('/seller/properties', {email}), {headers})
+  const response = await fetch(apiUrl('/seller/properties', {email: sellerEmail}), {headers, signal})
   const payload = await decodeJson(response)
   if (!response.ok) {
     throw new Error(errorMessage(payload, response.status))
