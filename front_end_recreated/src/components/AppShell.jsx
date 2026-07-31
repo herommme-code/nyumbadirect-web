@@ -797,7 +797,10 @@ export default function AppShell({sessionEmail = '', onLogout}) {
       const isFavoritesEvent = eventType === 'favorites.synced'
 
       if (isProfileEvent && isOwnAccountEvent) {
-        await refreshAccountFromServer()
+        // Profile saves can emit profile.* events themselves. Refetching the
+        // profile here creates a request feedback loop on the sync stream.
+        // The guarded account refresh above remains the single source of
+        // periodic profile updates.
         return
       }
 
