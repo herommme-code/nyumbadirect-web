@@ -618,9 +618,9 @@ function OpenStreetMapLayer({listings, activeListing, onMarkerClick, onAreaClick
             className={active ? 'osm-marker active' : 'osm-marker'}
             style={{left: `calc(50% + ${left + panOffset.x}px)`, top: `calc(50% + ${top + panOffset.y}px)`}}
             onClick={() => { onMarkerClick?.(area.listings[0]); onAreaClick?.(area) }}
-            aria-label={`${area.listings.length} properties in ${area.label}`}
+            aria-label={`${area.listings.length} properties, ${area.label}`}
           >
-            <span className="osm-marker-price">{area.listings.length} in {area.label.split(',')[0]}</span>
+            <span className="osm-marker-price">{area.listings.length} {area.listings.length === 1 ? 'property' : 'properties'} · {area.label.split(',')[0]}</span>
             <Icon name="location_on" />
           </button>
         )
@@ -1914,7 +1914,7 @@ function SellerProperties({listings, setListings, listingsStatus, setView, onUpl
   const [confirmRequest, setConfirmRequest] = useState(null)
   const [deletingListingId, setDeletingListingId] = useState('')
   const filteredListings = listings.filter((listing) => {
-    const matchesFilter = filter === 'active' ? listing.isVerified : filter === 'pending' ? !listing.isVerified : true
+    const matchesFilter = filter === 'published' ? listing.isVerified : filter === 'draft' ? !listing.isVerified : true
     const text = [
       listing.title,
       listing.type,
@@ -1973,8 +1973,8 @@ function SellerProperties({listings, setListings, listingsStatus, setView, onUpl
       <SearchBar value={search} onChange={setSearch} placeholder="Search your posted properties" />
       <div className="seller-filter-actions">
         <div className="seller-filter-row">
-          <button className={filter === 'active' ? 'active' : ''} type="button" onClick={() => setFilter(filter === 'active' ? '' : 'active')}>Active</button>
-          <button className={filter === 'pending' ? 'active' : ''} type="button" onClick={() => setFilter(filter === 'pending' ? '' : 'pending')}>Pending Review</button>
+          <button className={filter === 'published' ? 'active' : ''} type="button" onClick={() => setFilter(filter === 'published' ? '' : 'published')}>Published</button>
+          <button className={filter === 'draft' ? 'active' : ''} type="button" onClick={() => setFilter(filter === 'draft' ? '' : 'draft')}>Drafts</button>
         </div>
         <button className="filled-button page-action" onClick={onUpload}><Icon name="add_home" /> Upload Property</button>
       </div>
@@ -1989,7 +1989,7 @@ function SellerProperties({listings, setListings, listingsStatus, setView, onUpl
               <div>
                 <div className="seller-property-title-row">
                   <h3>{listing.title}</h3>
-                  <LabelChip label={listing.isVerified ? 'Active' : 'Pending'} icon={listing.isVerified ? 'verified' : 'pending_actions_rounded'} />
+                  <LabelChip label={listing.isVerified ? 'Published' : 'Draft'} icon={listing.isVerified ? 'verified' : 'pending_actions_rounded'} />
                 </div>
                 <p>{listing.ward}, {listing.district}</p>
                 <small>{listing.posted}</small>
