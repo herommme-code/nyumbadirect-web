@@ -1,36 +1,67 @@
 import React, {useEffect, useRef, useState} from 'react'
+import {Preferences} from '@capacitor/preferences'
 import AppShell from './components/AppShell'
 import {BrandLogoMark, BrandWordmark} from './components/BrandLogo'
 import Icon from './components/Icon'
 import {googleLogin, loginUser, registerUser} from './api/nyumbaApi'
+import {installDownloadedPlayUpdate, promptForPlayUpdate} from './mobile/playInAppUpdate'
 import findImg from './assets/onboarding/find-rentals.jpg'
 import './index.css'
 
 const GOOGLE_WEB_CLIENT_ID = import.meta.env.VITE_GOOGLE_WEB_CLIENT_ID || '620083900279-8ilaua6tn1nqke1mg9irhn7ecbrbiicr.apps.googleusercontent.com'
 
 export default function App() {
-  const [session, setSession] = useState(() => localStorage.getItem('nyumba_session_email') || '')
+  const [session, setSession] = useState(null)
   const [showAppPromo, setShowAppPromo] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    Preferences.get({key: 'nyumba_session_email'}).then(({value}) => {
+      if (!active) return
+      // Keep the browser fallback for existing web users, while native Android
+      // uses durable Capacitor preferences across app restarts.
+      setSession(value || localStorage.getItem('nyumba_session_email') || '')
+    })
+    return () => { active = false }
+  }, [])
+
+  useEffect(() => {
+    void promptForPlayUpdate()
+    const updateCheck = window.setInterval(() => {
+      void installDownloadedPlayUpdate()
+    }, 15000)
+    return () => window.clearInterval(updateCheck)
+  }, [])
+
+  const persistSession = async (email) => {
+    localStorage.setItem('nyumba_session_email', email)
+    await Preferences.set({key: 'nyumba_session_email', value: email})
+    setSession(email)
+  }
+
+  const clearSession = async () => {
+    localStorage.removeItem('nyumba_session_email')
+    await Preferences.remove({key: 'nyumba_session_email'})
+    setSession('')
+    setShowAppPromo(false)
+  }
 
   const dismissAppPromo = () => {
     if (session) localStorage.setItem(appPromoKey(session), 'seen')
     setShowAppPromo(false)
   }
 
+  if (session === null) return null
+
   if (session) {
     return <>
-      <AppShell sessionEmail={session} onLogout={() => {
-        localStorage.removeItem('nyumba_session_email')
-        setSession('')
-        setShowAppPromo(false)
-      }} />
+      <AppShell sessionEmail={session} onLogout={clearSession} />
       {showAppPromo && <MobileAppPromo onDismiss={dismissAppPromo} />}
     </>
   }
 
   return <AuthLanding onAuthenticated={(email) => {
-    localStorage.setItem('nyumba_session_email', email)
-    setSession(email)
+    void persistSession(email)
     if (localStorage.getItem(appPromoKey(email)) !== 'seen') setShowAppPromo(true)
   }} />
 }
