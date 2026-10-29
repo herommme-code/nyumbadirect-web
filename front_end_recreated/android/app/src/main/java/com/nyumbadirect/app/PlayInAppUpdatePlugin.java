@@ -1,10 +1,11 @@
 package com.nyumbadirect.app;
 
+import android.content.IntentSender;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
+import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
-import com.getcapacitor.annotation.PluginMethod;
 import com.google.android.play.core.appupdate.AppUpdateInfo;
 import com.google.android.play.core.appupdate.AppUpdateManager;
 import com.google.android.play.core.appupdate.AppUpdateManagerFactory;
@@ -50,13 +51,17 @@ public class PlayInAppUpdatePlugin extends Plugin {
                     call.resolve(new JSObject().put("started", false));
                     return;
                 }
-                updateManager.startUpdateFlowForResult(
-                    info,
-                    getActivity(),
-                    AppUpdateOptions.newBuilder(AppUpdateType.FLEXIBLE).build(),
-                    8101
-                );
-                call.resolve(new JSObject().put("started", true));
+                try {
+                    updateManager.startUpdateFlowForResult(
+                        info,
+                        getActivity(),
+                        AppUpdateOptions.newBuilder(AppUpdateType.FLEXIBLE).build(),
+                        8101
+                    );
+                    call.resolve(new JSObject().put("started", true));
+                } catch (IntentSender.SendIntentException error) {
+                    call.reject("Google Play could not open the update flow.", error);
+                }
             })
             .addOnFailureListener(error -> call.reject("Unable to start the Google Play update.", error));
     }
