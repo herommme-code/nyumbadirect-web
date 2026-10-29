@@ -1,0 +1,5 @@
+# Cloudflare Pages configuration for the NyumbaDirect Vite production build.
+# The project name is inferred from the existing GitHub repository name.
+name = "nyumbadirect-web"
+pages_build_output_dir = "./dist"
+compatibility_date = "2026-10-29"
