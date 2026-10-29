@@ -285,17 +285,33 @@ function areaCenterForListing(listing) {
   return areaCenters[areaKey(listing)] || null
 }
 
+function roundedLegacyAreaCenter(items) {
+  const coordinates = items.filter(hasMapLocation)
+  if (!coordinates.length) return null
+  // A rounded centroid is an area-discovery point, not an individual listing pin.
+  // Two decimal places intentionally limits precision to roughly a kilometre.
+  const average = (field) => coordinates.reduce((sum, item) => sum + item[field], 0) / coordinates.length
+  return {
+    latitude: Math.round(average('latitude') * 100) / 100,
+    longitude: Math.round(average('longitude') * 100) / 100,
+  }
+}
+
 function areaGroupsForListings(items) {
   const grouped = new Map()
   items.forEach((listing) => {
-    const center = areaCenterForListing(listing)
-    if (!center) return
     const key = areaKey(listing)
-    const group = grouped.get(key) || {key, label: areaLabel(listing), ...center, listings: []}
+    if (!listing?.region || !listing?.district || !listing?.ward) return
+    const group = grouped.get(key) || {key, label: areaLabel(listing), listings: []}
     group.listings.push(listing)
     grouped.set(key, group)
   })
   return [...grouped.values()]
+    .map((group) => ({
+      ...group,
+      ...(areaCenterForListing(group.listings[0]) || roundedLegacyAreaCenter(group.listings)),
+    }))
+    .filter((group) => Number.isFinite(group.latitude) && Number.isFinite(group.longitude))
 }
 
 function propertyGalleryImages(listing) {
