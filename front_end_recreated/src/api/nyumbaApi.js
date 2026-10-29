@@ -536,6 +536,7 @@ function propertyListingFromJson(json) {
     landmark: `${json.landmark || ''}`,
     latitude: numberFromAny(json.latitude || json.lat),
     longitude: numberFromAny(json.longitude || json.lng),
+    areaCenter: json.areaCenter || json.area_center || null,
     amenities: stringList(json.amenities),
     isVerified: boolFromAny(json.isVerified || json.is_verified || json.verified || json.published || json.is_active || (`${json.status || ''}`.toLowerCase() === 'active')),
     isFeatured: boolFromAny(json.isFeatured || json.is_featured),

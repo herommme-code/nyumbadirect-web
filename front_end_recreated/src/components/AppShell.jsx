@@ -160,7 +160,6 @@ const propertyAmenityOptions = [
   'CCTV',
   'Swimming Pool',
   'Backup Generator',
-  'GPS Verified',
 ]
 const propertyRegionDistricts = {
   'Arusha': ['Arusha City', 'Arusha', 'Karatu', 'Longido', 'Meru', 'Monduli', 'Ngorongoro'],
@@ -176,6 +175,14 @@ const propertyRegionDistricts = {
 }
 const defaultPropertyRegion = 'Dar es Salaam'
 const defaultPropertyDistrict = 'Kinondoni'
+// These are deliberately area-centre coordinates, never a property's exact position.
+// Expand this registry with the approved administrative-area dataset as coverage grows.
+const areaCenters = {
+  'dar es salaam|kinondoni|masaki': {latitude: -6.7465, longitude: 39.2780},
+  'dar es salaam|kinondoni|mikocheni': {latitude: -6.7650, longitude: 39.2390},
+  'dar es salaam|ubungo|sinza': {latitude: -6.7850, longitude: 39.2200},
+  'dar es salaam|kigamboni|kibada': {latitude: -6.8950, longitude: 39.3500},
+}
 const defaultProfile = {
   fullName: 'Nyumbadirect Guest',
   phone: '',
@@ -259,6 +266,36 @@ function hasMapLocation(listing) {
     Number.isFinite(listing.longitude) &&
     listing.latitude !== 0 &&
     listing.longitude !== 0
+}
+
+function areaKey(listing) {
+  return [listing?.region, listing?.district, listing?.ward]
+    .map((value) => `${value || ''}`.trim().toLowerCase()).join('|')
+}
+
+function areaLabel(listing) {
+  return [listing?.ward, listing?.district, listing?.region].filter(Boolean).join(', ')
+}
+
+function areaCenterForListing(listing) {
+  const serverCenter = listing?.areaCenter || listing?.area_center
+  if (Number.isFinite(Number(serverCenter?.latitude)) && Number.isFinite(Number(serverCenter?.longitude))) {
+    return {latitude: Number(serverCenter.latitude), longitude: Number(serverCenter.longitude)}
+  }
+  return areaCenters[areaKey(listing)] || null
+}
+
+function areaGroupsForListings(items) {
+  const grouped = new Map()
+  items.forEach((listing) => {
+    const center = areaCenterForListing(listing)
+    if (!center) return
+    const key = areaKey(listing)
+    const group = grouped.get(key) || {key, label: areaLabel(listing), ...center, listings: []}
+    group.listings.push(listing)
+    grouped.set(key, group)
+  })
+  return [...grouped.values()]
 }
 
 function propertyGalleryImages(listing) {
@@ -390,9 +427,10 @@ function sharedPropertyIdFromHash() {
   return match ? decodeURIComponent(match[1]) : ''
 }
 
-function OpenStreetMapLayer({listings, activeListing, onMarkerClick, detailed = false}) {
-  const mappedListings = listings.filter(hasMapLocation)
-  const focusedListings = activeListing && hasMapLocation(activeListing) ? [activeListing] : mappedListings
+function OpenStreetMapLayer({listings, activeListing, onMarkerClick, onAreaClick, detailed = false}) {
+  const areaGroups = areaGroupsForListings(listings)
+  const focusedArea = activeListing ? areaGroups.find((area) => area.key === areaKey(activeListing)) : null
+  const focusedListings = focusedArea ? [{...focusedArea, latitude: focusedArea.latitude, longitude: focusedArea.longitude}] : areaGroups
   const baseZoom = zoomForListings(focusedListings, detailed)
   const [zoomDelta, setZoomDelta] = useState(0)
   const [panOffset, setPanOffset] = useState({x: 0, y: 0})
@@ -439,7 +477,7 @@ function OpenStreetMapLayer({listings, activeListing, onMarkerClick, detailed = 
     {length: verticalRadius * 2 + 1},
     (_, index) => index - verticalRadius,
   )
-  const markerListings = mappedListings
+  const markerAreas = areaGroups
   const zoomIn = () => setZoomDelta((value) => clamp(value + 1, 5 - baseZoom, 18 - baseZoom))
   const zoomOut = () => setZoomDelta((value) => clamp(value - 1, 5 - baseZoom, 18 - baseZoom))
   const handleWheel = (event) => {
@@ -553,20 +591,20 @@ function OpenStreetMapLayer({listings, activeListing, onMarkerClick, detailed = 
           />
         )
       }))}
-      {markerListings.map((listing) => {
-        const pixel = latLngToWorldPixel(listing.latitude, listing.longitude, zoom)
+      {markerAreas.map((area) => {
+        const pixel = latLngToWorldPixel(area.latitude, area.longitude, zoom)
         const left = pixel.x - centerPixel.x
         const top = pixel.y - centerPixel.y
-        const active = activeListing?.id === listing.id
+        const active = activeListing && area.key === areaKey(activeListing)
         return (
           <button
-            key={listing.id}
+            key={area.key}
             className={active ? 'osm-marker active' : 'osm-marker'}
             style={{left: `calc(50% + ${left + panOffset.x}px)`, top: `calc(50% + ${top + panOffset.y}px)`}}
-            onClick={() => onMarkerClick?.(listing)}
-            aria-label={listing.title}
+            onClick={() => { onMarkerClick?.(area.listings[0]); onAreaClick?.(area) }}
+            aria-label={`${area.listings.length} properties in ${area.label}`}
           >
-            <span className="osm-marker-price">{mapMarkerLabel(listing)}</span>
+            <span className="osm-marker-price">{area.listings.length} in {area.label.split(',')[0]}</span>
             <Icon name="location_on" />
           </button>
         )
@@ -598,6 +636,7 @@ export default function AppShell({sessionEmail = '', onLogout}) {
   const [dataMessage, setDataMessage] = useState('Loading live listings...')
   const [saved, setSaved] = useState(() => new Set(sessionEmail ? withoutDemoListings(loadStoredJson(accountKey(sessionEmail, 'favorites'), [])).map((id) => `${id}`.trim()).filter(Boolean) : []))
   const [query, setQuery] = useState('')
+  const [preferredSearchLocation, setPreferredSearchLocation] = useState(() => loadStoredJson('nyumba_preferred_search_location', {region: '', district: '', ward: ''}))
   const [activeListing, setActiveListing] = useState(() => withoutDemoListings(loadStoredJson('nyumba_public_listings', []))[0] || null)
   const [detailListing, setDetailListing] = useState(null)
   const [sharedPropertyId, setSharedPropertyId] = useState(sharedPropertyIdFromHash)
@@ -889,6 +928,18 @@ export default function AppShell({sessionEmail = '', onLogout}) {
     ].join(' ').toLowerCase().includes(search))
   }, [query, sellerListings])
 
+  const nearbyListings = useMemo(() => {
+    const {region, district, ward} = preferredSearchLocation
+    if (!region) return sellerListings
+    const score = (listing) => (listing.region === region ? 4 : 0) + (listing.district === district ? 2 : 0) + (listing.ward === ward ? 1 : 0)
+    return sellerListings.filter((listing) => listing.region === region).sort((left, right) => score(right) - score(left))
+  }, [preferredSearchLocation, sellerListings])
+
+  function savePreferredSearchLocation(nextLocation) {
+    setPreferredSearchLocation(nextLocation)
+    saveStoredJson('nyumba_preferred_search_location', nextLocation)
+  }
+
   function toggleSaved(id) {
     setSaved((current) => {
       const next = new Set(current)
@@ -944,7 +995,7 @@ export default function AppShell({sessionEmail = '', onLogout}) {
   }
 
   function updatePublicListing(listing) {
-    if (!listing || !hasMapLocation(listing)) return
+    if (!listing || !listing.region || !listing.district || !listing.ward) return
     setSellerListings((current) => {
       const next = mergeListingCollections(current, [listing])
       saveStoredJson('nyumba_public_listings', next)
@@ -952,7 +1003,7 @@ export default function AppShell({sessionEmail = '', onLogout}) {
     })
     setActiveListing((current) => current && sameListing(current, listing) ? listing : current || listing)
     setDataStatus('live')
-    setDataMessage('Your GPS-verified property is now visible publicly.')
+    setDataMessage('Your property is now visible publicly in its registered area.')
   }
 
   async function refreshPublicListingsFromServer() {
@@ -1018,10 +1069,10 @@ export default function AppShell({sessionEmail = '', onLogout}) {
   const pages = [
     sellerMode
       ? <SellerScreen listings={accountListings} setListings={setAccountListings} listingsStatus={sellerListingsStatus} initialView="dashboard" sessionEmail={sessionEmail} profile={profile} openListing={openListingDetails} onListingsSynced={syncSellerWorkspace} onPublicListingUpdate={updatePublicListing} onOpenPropertiesTab={() => setSelected(1)} refreshPublicListings={refreshPublicListingsFromServer} />
-      : <HomeScreen listings={sellerListings} setSelected={setSelected} setQuery={setQuery} saved={saved} toggleSaved={toggleSaved} openListing={openListingDetails} dataStatus={dataStatus} dataMessage={dataMessage} />,
+      : <HomeScreen listings={nearbyListings} setSelected={setSelected} setQuery={setQuery} saved={saved} toggleSaved={toggleSaved} openListing={openListingDetails} dataStatus={dataStatus} dataMessage={dataMessage} />,
     sellerMode
       ? <SellerScreen listings={accountListings} setListings={setAccountListings} listingsStatus={sellerListingsStatus} initialView="properties" sessionEmail={sessionEmail} profile={profile} openListing={openListingDetails} onListingsSynced={syncSellerWorkspace} onPublicListingUpdate={updatePublicListing} refreshPublicListings={refreshPublicListingsFromServer} />
-      : <SearchScreen query={query} setQuery={setQuery} listings={filteredListings} saved={saved} toggleSaved={toggleSaved} openListing={openListingDetails} openMap={() => openMapForListing(filteredListings.find(hasMapLocation) || sellerListings.find(hasMapLocation))} dataStatus={dataStatus} dataMessage={dataMessage} />,
+      : <SearchScreen query={query} setQuery={setQuery} listings={filteredListings} preferredLocation={preferredSearchLocation} setPreferredLocation={savePreferredSearchLocation} saved={saved} toggleSaved={toggleSaved} openListing={openListingDetails} openMap={() => openMapForListing(filteredListings[0] || sellerListings[0])} dataStatus={dataStatus} dataMessage={dataMessage} />,
     <MapScreen listings={sellerListings} setSelected={setSelected} activeListing={activeListing} setActiveListing={setActiveListing} />,
     <SavedScreen listings={sellerListings.filter((listing) => saved.has(listing.id))} saved={saved} toggleSaved={toggleSaved} openListing={openListingDetails} />,
     <ChatScreen
@@ -1142,7 +1193,7 @@ function HomeScreen({listings, setSelected, setQuery, saved, toggleSaved, openLi
       <HeroSection onSearch={() => setSelected(1)} />
       <DataStatusBanner status={dataStatus} message={dataMessage} />
       <div className="stat-row">
-        <StatPill icon="verified" label="GPS verified" value="Real mapped locations" />
+        <StatPill icon="location_on" label="Area-based discovery" value="Explore without exact addresses" />
         <StatPill icon="location_city" label="Rental listings" value="Homes ready to explore" />
         <StatPill icon="support_agent" label="Active brokers" value="Direct help from trusted brokers" />
       </div>
@@ -1203,7 +1254,7 @@ function HeroSection({onSearch}) {
       <div className="hero-preview">
         <div className="hero-preview-heading">
           <p>Verified Homes. Real Locations.</p>
-          <span>GPS ready</span>
+          <span>Area based</span>
         </div>
         <div className="building-illustration" aria-hidden="true">
           <span className="roof" />
@@ -1218,20 +1269,21 @@ function HeroSection({onSearch}) {
         </div>
         <div className="verified-line">
           <Icon name="verified" />
-          <span>GPS Verified Location</span>
+          <span>Area-based discovery</span>
         </div>
       </div>
     </section>
   )
 }
 
-function SearchScreen({query, setQuery, listings, saved, toggleSaved, openListing, openMap, dataStatus, dataMessage}) {
+function SearchScreen({query, setQuery, listings, preferredLocation, setPreferredLocation, saved, toggleSaved, openListing, openMap, dataStatus, dataMessage}) {
   const resultTitle = query.trim() ? 'Search Results' : 'All Published Properties'
   return (
     <div className="search-page">
       <div className="search-top">
         <SearchPageTitle />
         <SearchBar value={query} onChange={setQuery} />
+        <NearbyLocationSelector value={preferredLocation} onChange={setPreferredLocation} />
         <DataStatusBanner status={dataStatus} message={dataMessage} />
         <div className="search-filter-row">
           {['Apartment', 'House', 'Plot', 'Room', 'Nearby'].map((filter) => (
@@ -1254,6 +1306,25 @@ function SearchScreen({query, setQuery, listings, saved, toggleSaved, openListin
   )
 }
 
+function NearbyLocationSelector({value, onChange}) {
+  const districts = propertyRegionDistricts[value.region] || []
+  const updateRegion = (region) => onChange({region, district: propertyRegionDistricts[region]?.[0] || '', ward: ''})
+  return (
+    <section className="nearby-location-selector">
+      <div><Icon name="location_on" /><span><strong>Nearby You</strong><small>No GPS needed — choose your search area.</small></span></div>
+      <div className="nearby-location-fields">
+        <select aria-label="Preferred region" value={value.region} onChange={(event) => updateRegion(event.target.value)}>
+          <option value="">Choose region</option>{Object.keys(propertyRegionDistricts).map((region) => <option key={region}>{region}</option>)}
+        </select>
+        <select aria-label="Preferred district" value={value.district} disabled={!value.region} onChange={(event) => onChange({...value, district: event.target.value, ward: ''})}>
+          <option value="">Choose district</option>{districts.map((district) => <option key={district}>{district}</option>)}
+        </select>
+        <input aria-label="Preferred ward or neighbourhood" value={value.ward} disabled={!value.district} onChange={(event) => onChange({...value, ward: event.target.value})} placeholder="Ward / neighbourhood" />
+      </div>
+    </section>
+  )
+}
+
 function SearchPageTitle() {
   return (
     <header className="search-page-title">
@@ -1265,12 +1336,13 @@ function SearchPageTitle() {
 }
 
 function SearchResultsMap({listings, onOpenMap}) {
+  const mappedAreaCount = areaGroupsForListings(listings).length
   return (
     <section className="search-results-map" aria-label="Search results map">
       <OpenStreetMapLayer listings={listings} />
       <div className="map-count-chip">
         <Icon name="location_on" />
-        <span>{listings.length ? `${listings.length} mapped` : 'No mapped results'}</span>
+        <span>{mappedAreaCount ? `${mappedAreaCount} areas` : 'No mapped areas'}</span>
       </div>
       <button className="map-open-button" type="button" onClick={onOpenMap}>
         <Icon name="map_rounded" />
@@ -1281,15 +1353,27 @@ function SearchResultsMap({listings, onOpenMap}) {
 }
 
 function MapScreen({listings, setSelected, activeListing, setActiveListing}) {
+  const [selectedArea, setSelectedArea] = useState(null)
   return (
     <div className="map-screen">
       <OpenStreetMapLayer
         listings={listings}
         activeListing={activeListing}
         onMarkerClick={setActiveListing}
+        onAreaClick={setSelectedArea}
         detailed
       />
       <MapHeaderOverlay onBack={() => setSelected(0)} />
+      {selectedArea && (
+        <section className="map-area-results" aria-label={`Properties in ${selectedArea.label}`}>
+          <div>
+            <strong>{selectedArea.label}</strong>
+            <span>Approximate area centre · {selectedArea.listings.length} properties</span>
+          </div>
+          <button type="button" onClick={() => setSelectedArea(null)} aria-label="Close area results"><Icon name="close" /></button>
+          <ul>{selectedArea.listings.map((listing) => <li key={listing.id}>{listing.title}</li>)}</ul>
+        </section>
+      )}
     </div>
   )
 }
@@ -1303,7 +1387,7 @@ function MapHeaderOverlay({onBack}) {
       <BrandLogoMark size={42} />
       <div className="map-header-copy">
         <h1>Property Map</h1>
-        <p>Explore verified rentals across available locations.</p>
+        <p>Explore properties by approximate area, never an exact address.</p>
       </div>
     </header>
   )
@@ -1995,11 +2079,6 @@ function AddPropertyScreen({setView, setListings, initialPurpose, editingListing
     landmark: editingListing?.landmark || '',
     amenities: editingListing?.amenities?.join(', ') || '',
   }))
-  const existingLocation = editingListing?.isVerified && hasMapLocation(editingListing)
-    ? {latitude: editingListing.latitude, longitude: editingListing.longitude, accuracy: null}
-    : null
-  const [position, setPosition] = useState(existingLocation)
-  const [locationLoading, setLocationLoading] = useState(false)
   const [selectedImages, setSelectedImages] = useState(() => editingListing ? propertyGalleryImages(editingListing) : [])
   const [selectedImageFiles, setSelectedImageFiles] = useState([])
   const selectedImagesRef = useRef(selectedImages)
@@ -2050,31 +2129,6 @@ function AddPropertyScreen({setView, setListings, initialPurpose, editingListing
       return {...current, amenities: [...amenities].join(', ')}
     })
   }
-  const captureLocation = () => {
-    if (!navigator.geolocation) {
-      setMessage('Location is not available in this browser.')
-      return
-    }
-    setLocationLoading(true)
-    setMessage('Capturing live GPS coordinates...')
-    navigator.geolocation.getCurrentPosition(
-      (current) => {
-        const nextPosition = {
-          latitude: current.coords.latitude,
-          longitude: current.coords.longitude,
-          accuracy: current.coords.accuracy,
-        }
-        setPosition(nextPosition)
-        setLocationLoading(false)
-        setMessage(`Live GPS location captured. Accuracy +/- ${Math.round(current.coords.accuracy || 0)} m.`)
-      },
-      () => {
-        setLocationLoading(false)
-        setMessage('Could not pick coordinates. Please try again.')
-      },
-      {enableHighAccuracy: true, timeout: 20000, maximumAge: 0},
-    )
-  }
   const pickImages = (event) => {
     const files = Array.from(event.target.files || [])
     if (!files.length) return
@@ -2090,14 +2144,13 @@ function AddPropertyScreen({setView, setListings, initialPurpose, editingListing
       setMessage('Please sign in before adding a property.')
       return
     }
-    const required = ['title', 'description', 'price', 'type', 'region', 'district', 'ward', 'landmark']
+    const required = ['title', 'description', 'price', 'type', 'region', 'district', 'ward']
     const complete = required.every((key) => `${form[key]}`.trim()) &&
       (isPlot ? `${form.plotSize}`.trim() : `${form.bedrooms}`.trim() && `${form.bathrooms}`.trim())
     if (!complete) {
       setMessage('Complete all listing details with valid property information.')
       return
     }
-    const hasLocation = Boolean(position)
     const listingAmenities = isPlot
       ? []
       : form.amenities.split(',').map((item) => item.trim()).filter(Boolean)
@@ -2117,10 +2170,11 @@ function AddPropertyScreen({setView, setListings, initialPurpose, editingListing
       district: form.district,
       ward: form.ward,
       landmark: form.landmark,
-      latitude: position?.latitude || 0,
-      longitude: position?.longitude || 0,
-      amenities: isPlot ? [] : (listingAmenities.length ? listingAmenities : (hasLocation ? ['GPS Verified'] : ['Pending Location'])),
-      isVerified: hasLocation,
+      // Exact coordinates are intentionally not collected. The map uses the registered area centre.
+      latitude: 0,
+      longitude: 0,
+      amenities: isPlot ? [] : listingAmenities,
+      isVerified: true,
       image: selectedImages[0] || editingListing?.image || manageImg,
       imageUrls: selectedImages.length ? selectedImages : editingListing?.imageUrls,
       localImagePaths: selectedImages.length ? selectedImages : editingListing?.localImagePaths,
@@ -2142,14 +2196,14 @@ function AddPropertyScreen({setView, setListings, initialPurpose, editingListing
       ? listings.map((item) => item.id === nextListing.id ? nextListing : item)
       : [nextListing, ...listings]
 
-    // Match the Flutter app: save first, expose GPS-verified listings locally,
+    // Save first, then allow the server and image uploads to finish in the background.
     // then allow the server and image uploads to finish in the background.
     setListings(nextListingsSnapshot)
     onListingsSynced?.(nextListingsSnapshot)
     saveStoredJson(accountKey(sessionEmail, 'seller_listings'), nextListingsSnapshot)
-    if (hasLocation) onPublicListingUpdate?.(nextListing)
+    onPublicListingUpdate?.(nextListing)
 
-    onSaved?.({listing: nextListing, published: hasLocation})
+    onSaved?.({listing: nextListing, published: true})
     setView('success')
 
     void (async () => {
@@ -2173,7 +2227,7 @@ function AddPropertyScreen({setView, setListings, initialPurpose, editingListing
         setListings(syncedListings)
         onListingsSynced?.(syncedListings)
         saveStoredJson(accountKey(sessionEmail, 'seller_listings'), syncedListings)
-        if (finalListing.isVerified) onPublicListingUpdate?.(finalListing)
+        onPublicListingUpdate?.(finalListing)
         await refreshPublicListings?.().catch(() => [])
       } catch (error) {
         // The listing stays saved and publicly visible locally, just as in Flutter.
@@ -2181,19 +2235,10 @@ function AddPropertyScreen({setView, setListings, initialPurpose, editingListing
       }
     })()
   }
-  const previewListing = position ? {
-    ...baseListing,
-    title: form.title.trim() || 'Property location',
-    price: Number(`${form.price}`.replaceAll(',', '')) || 0,
-    latitude: position.latitude,
-    longitude: position.longitude,
-    isVerified: true,
-  } : null
-
   return (
     <>
-      <BackTitle title={editingListing ? 'Edit Property' : 'Add New Property'} subtitle="Create a rental or sale listing with photos and GPS location." onBack={() => setView(returnView)} />
-      <NoticeCard icon="my_location" title="Please stand at the property location before registering coordinates." text="Coordinates are captured live by GPS and cannot be entered manually." />
+      <BackTitle title={editingListing ? 'Edit Property' : 'Add New Property'} subtitle="Register a property remotely using its area details." onBack={() => setView(returnView)} />
+      <NoticeCard icon="location_on" title="Area-based location" text="Choose the region, district and ward or neighbourhood. Your exact property address and GPS position are not shown on the map." />
       <form className="property-form seller-upload-form">
         <ControlledField icon="title" label="Property title" value={form.title} onChange={(value) => update('title', value)} placeholder="Modern apartment in Masaki" />
         <ControlledField icon="payments" label={form.purpose === 'Sale' ? 'Sale price' : 'Price per month'} value={form.price} onChange={(value) => updateNonNegative('price', value)} placeholder="1500000" type="number" />
@@ -2212,7 +2257,7 @@ function AddPropertyScreen({setView, setListings, initialPurpose, editingListing
         <ControlledSelect icon="map_outlined" label="Region" value={form.region} options={Object.keys(propertyRegionDistricts)} onChange={updateRegion} />
         <ControlledSelect icon="location_city_outlined" label="District" value={form.district} options={selectedDistrictOptions} onChange={(value) => update('district', value)} />
         <ControlledField icon="place_outlined" label="Ward" value={form.ward} onChange={(value) => update('ward', value)} placeholder="Type ward manually" />
-        <ControlledField icon="near_me_outlined" label="Landmark" value={form.landmark} onChange={(value) => update('landmark', value)} placeholder="Near Slipway" />
+        <ControlledField icon="near_me_outlined" label="Street or landmark (optional)" value={form.landmark} onChange={(value) => update('landmark', value)} placeholder="Near Slipway" />
         {!isPlot && (
           <div className="field wide amenity-picker">
             <span>Amenities</span>
@@ -2233,18 +2278,7 @@ function AddPropertyScreen({setView, setListings, initialPurpose, editingListing
         )}
         <ControlledTextarea icon="notes_outlined" label="Description" value={form.description} onChange={(value) => update('description', value)} wide />
       </form>
-      <button className="filled-button seller-full-action" type="button" onClick={captureLocation} disabled={locationLoading}>
-        <Icon name="gps_fixed" /> {locationLoading ? 'Capturing GPS...' : 'Register Property Location'}
-      </button>
       {message && <p className="seller-form-message">{message}</p>}
-      {position && (
-        <StaticLocationPreview
-          listing={previewListing}
-          latitude={position.latitude}
-          longitude={position.longitude}
-          accuracyMeters={position.accuracy}
-        />
-      )}
       <input
         ref={imageInputRef}
         className="visually-hidden"
@@ -2264,8 +2298,7 @@ function AddPropertyScreen({setView, setListings, initialPurpose, editingListing
         />
       )}
       <button className="filled-button seller-full-action" type="button" onClick={publishProperty}>
-        <Icon name={position ? 'cloud_upload' : 'pending_actions_rounded'} />
-        {position ? 'Publish Property' : 'Save as Pending'}
+        <Icon name="cloud_upload" /> Publish Property
       </button>
       {toast && <Toast message={toast} />}
     </>
@@ -2276,8 +2309,8 @@ function PropertyPublishSuccessScreen({result, setView, onUpload}) {
   const published = result?.published
   const title = published ? 'Property Published' : 'Property Saved as Pending'
   const message = published
-    ? 'Your GPS-verified property is now published live for users to discover.'
-    : 'Your property is saved in your seller workspace. Register GPS at the property location to publish it live.'
+    ? 'Your property is now published live in its registered area.'
+    : 'Your property is saved in your seller workspace.'
 
   return (
     <section className="property-publish-success">
@@ -2373,14 +2406,14 @@ function SubscriptionScreen({setView}) {
 function getPackagePlans(yearly) {
   return yearly
     ? [
-        {name: 'Basic', tagline: 'Up to 5 properties', price: 'TZS 12,000', cadence: 'per year', features: ['Up to 5 properties', 'Photo uploads', 'GPS verified location', 'Video uploads']},
-        {name: 'Standard', tagline: 'Up to 10 properties', price: 'TZS 36,000', cadence: 'per year', highlighted: true, features: ['Up to 10 properties', 'Photo uploads', 'GPS verified location', 'Video uploads']},
-        {name: 'Premium', tagline: 'Unlimited properties', price: 'TZS 60,000', cadence: 'per year', features: ['Unlimited properties', 'Photo uploads', 'GPS verified location', 'Video uploads']},
+        {name: 'Basic', tagline: 'Up to 5 properties', price: 'TZS 12,000', cadence: 'per year', features: ['Up to 5 properties', 'Photo uploads', 'Area-based location', 'Video uploads']},
+        {name: 'Standard', tagline: 'Up to 10 properties', price: 'TZS 36,000', cadence: 'per year', highlighted: true, features: ['Up to 10 properties', 'Photo uploads', 'Area-based location', 'Video uploads']},
+        {name: 'Premium', tagline: 'Unlimited properties', price: 'TZS 60,000', cadence: 'per year', features: ['Unlimited properties', 'Photo uploads', 'Area-based location', 'Video uploads']},
       ]
     : [
-        {name: 'Basic', tagline: 'Up to 5 properties', price: 'TZS 1,000', cadence: 'per month', features: ['Up to 5 properties', 'Photo uploads', 'GPS verified location', 'Video uploads']},
-        {name: 'Standard', tagline: 'Up to 10 properties', price: 'TZS 3,000', cadence: 'per month', highlighted: true, features: ['Up to 10 properties', 'Photo uploads', 'GPS verified location', 'Video uploads']},
-        {name: 'Premium', tagline: 'Unlimited properties', price: 'TZS 5,000', cadence: 'per month', features: ['Unlimited properties', 'Photo uploads', 'GPS verified location', 'Video uploads']},
+        {name: 'Basic', tagline: 'Up to 5 properties', price: 'TZS 1,000', cadence: 'per month', features: ['Up to 5 properties', 'Photo uploads', 'Area-based location', 'Video uploads']},
+        {name: 'Standard', tagline: 'Up to 10 properties', price: 'TZS 3,000', cadence: 'per month', highlighted: true, features: ['Up to 10 properties', 'Photo uploads', 'Area-based location', 'Video uploads']},
+        {name: 'Premium', tagline: 'Unlimited properties', price: 'TZS 5,000', cadence: 'per month', features: ['Unlimited properties', 'Photo uploads', 'Area-based location', 'Video uploads']},
       ]
 }
 
@@ -2959,11 +2992,7 @@ function PropertyDetails({listing, sessionEmail = '', saved, toggleSaved, onBack
         <div className="property-details-chip-row">
           <LabelChip label={listing.purpose === 'Sale' ? 'For sale' : 'For rent'} />
           <LabelChip label={listing.type} />
-          {listing.isVerified ? (
-            <LabelChip label="GPS Verified Location" icon="verified" />
-          ) : (
-            <LabelChip label="Pending Location" icon="pending_actions_rounded" />
-          )}
+          <LabelChip label="Area location" icon="location_on" />
           <LabelChip label="Available Now" />
         </div>
 
@@ -2997,14 +3026,14 @@ function PropertyDetails({listing, sessionEmail = '', saved, toggleSaved, onBack
         )}
 
         <section className="property-details-section">
-          <SectionHeader title={listing.isVerified ? 'Verified Location' : 'Pending Location'} />
-          {listing.isVerified ? (
+          <SectionHeader title="Approximate area" />
+          {areaCenterForListing(listing) ? (
             <PropertyMapPreview listing={listing} onViewMap={onViewMap} />
           ) : (
             <NoticeCard
-              icon="pending_actions_rounded"
-              title="Location coordinates not registered"
-              text="This property is pending until GPS coordinates are captured at the property location."
+              icon="location_on"
+              title="Area map coming soon"
+              text="This listing is searchable by its registered area. Its area centre will appear on the map when that area is added."
             />
           )}
         </section>
@@ -3049,12 +3078,13 @@ function PropertyDetails({listing, sessionEmail = '', saved, toggleSaved, onBack
 }
 
 function PropertyMapPreview({listing, latitude, longitude, accuracyMeters, onViewMap, showCoordinates = false}) {
+  const areaCenter = areaCenterForListing(listing) || {latitude, longitude}
   const previewListing = listing || {
     id: 'location-preview',
     title: 'Property location',
     price: 0,
-    latitude,
-    longitude,
+    latitude: areaCenter.latitude,
+    longitude: areaCenter.longitude,
     isVerified: true,
   }
   const canViewMap = typeof onViewMap === 'function'
@@ -3081,7 +3111,7 @@ function PropertyMapPreview({listing, latitude, longitude, accuracyMeters, onVie
           <>
             <Icon name="gps_fixed" />
             <div>
-              <strong>Live GPS location captured</strong>
+              <strong>Approximate area centre</strong>
               <span>Lat {Number(latitude).toFixed(5)}, Lng {Number(longitude).toFixed(5)}</span>
               {accuracyMeters ? <small>Accuracy +/- {Math.round(accuracyMeters)} m</small> : null}
             </div>
@@ -3090,8 +3120,8 @@ function PropertyMapPreview({listing, latitude, longitude, accuracyMeters, onVie
           <>
             <Icon name="location_on" />
             <div>
-              <strong>{previewListing.title || 'Property location'}</strong>
-              <span>{previewListing.ward || previewListing.district ? [previewListing.ward, previewListing.district].filter(Boolean).join(', ') : 'GPS verified location'}</span>
+              <strong>Approximate area: {areaLabel(previewListing)}</strong>
+              <span>For discovery only — not the property's exact location.</span>
             </div>
             {canViewMap && (
               <button className="filled-button compact-map-button" type="button" onClick={onViewMap}>
