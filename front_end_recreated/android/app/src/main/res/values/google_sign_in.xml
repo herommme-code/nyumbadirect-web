@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Public OAuth client ID used as the audience of the ID token sent to Laravel. -->
+    <string name="google_web_client_id">620083900279-8ilaua6tn1nqke1mg9irhn7ecbrbiicr.apps.googleusercontent.com</string>
+</resources>

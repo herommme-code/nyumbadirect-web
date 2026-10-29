@@ -5,6 +5,7 @@ import {BrandLogoMark, BrandWordmark} from './components/BrandLogo'
 import Icon from './components/Icon'
 import {googleLogin, loginUser, registerUser} from './api/nyumbaApi'
 import {installDownloadedPlayUpdate, promptForPlayUpdate} from './mobile/playInAppUpdate'
+import {signInWithNativeGoogle, usesNativeGoogleSignIn} from './mobile/nativeGoogleSignIn'
 import findImg from './assets/onboarding/find-rentals.jpg'
 import './index.css'
 
@@ -126,6 +127,7 @@ function AuthLanding({onAuthenticated}) {
   const [error, setError] = useState('')
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' ? window.innerWidth <= 980 : false)
   const [mobileStep, setMobileStep] = useState('onboarding')
+  const nativeGoogleSignIn = usesNativeGoogleSignIn()
 
   const authenticate = async (nextAction) => {
     const cleanEmail = email.trim()
@@ -184,7 +186,27 @@ function AuthLanding({onAuthenticated}) {
     }
   }
 
+  const handleNativeGoogleSignIn = async () => {
+    setGoogleLoading(true)
+    setError('')
+    try {
+      const {idToken} = await signInWithNativeGoogle()
+      const result = await googleLogin({idToken})
+      onAuthenticated(result.email || 'google-user@nyumbadirect.local')
+    } catch (error) {
+      const message = error?.message || 'Google sign-in failed.'
+      // Closing the account picker is normal; do not present it as a backend failure.
+      if (!/cancelled/i.test(message)) setError(message)
+    } finally {
+      setGoogleLoading(false)
+    }
+  }
+
   useEffect(() => {
+    if (nativeGoogleSignIn) {
+      setGoogleReady(true)
+      return undefined
+    }
     let cancelled = false
     loadGoogleIdentityServices()
       .then(() => {
@@ -203,10 +225,10 @@ function AuthLanding({onAuthenticated}) {
     return () => {
       cancelled = true
     }
-  }, [onAuthenticated])
+  }, [nativeGoogleSignIn, onAuthenticated])
 
   useEffect(() => {
-    if (!googleReady || !googleButtonRef.current || !window.google?.accounts?.id) return
+    if (nativeGoogleSignIn || !googleReady || !googleButtonRef.current || !window.google?.accounts?.id) return
 
     const container = googleButtonRef.current
     container.innerHTML = ''
@@ -219,7 +241,7 @@ function AuthLanding({onAuthenticated}) {
       logo_alignment: 'left',
       width: Math.max(240, Math.round(container.getBoundingClientRect().width || 320)),
     })
-  }, [googleReady, isMobile, mobileStep])
+  }, [googleReady, isMobile, mobileStep, nativeGoogleSignIn])
 
   useEffect(() => {
     const updateMobileState = () => setIsMobile(window.innerWidth <= 980)
@@ -275,7 +297,7 @@ function AuthLanding({onAuthenticated}) {
       </div>
       <div className="auth-google-divider"><span>or continue with</span></div>
       <div className={`auth-google-shell ${googleLoading ? 'loading' : ''}`}>
-        <button className="auth-google-button" type="button" disabled={!googleReady || googleLoading} tabIndex={-1} aria-hidden="true">
+        <button className="auth-google-button" type="button" disabled={!googleReady || googleLoading} tabIndex={nativeGoogleSignIn ? 0 : -1} aria-hidden={nativeGoogleSignIn ? undefined : 'true'} onClick={nativeGoogleSignIn ? handleNativeGoogleSignIn : undefined}>
           <span className="auth-google-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false">
               <path fill="#4285F4" d="M23.49 12.27c0-.79-.07-1.54-.2-2.27H12v4.29h6.46c-.28 1.5-1.12 2.77-2.39 3.62v3h3.87c2.26-2.08 3.55-5.15 3.55-8.64Z" />
@@ -286,7 +308,7 @@ function AuthLanding({onAuthenticated}) {
           </span>
           {googleLoading ? 'Connecting...' : 'Continue with Google'}
         </button>
-        <div className="auth-google-hit-target" ref={googleButtonRef} aria-label="Continue with Google" />
+        {!nativeGoogleSignIn && <div className="auth-google-hit-target" ref={googleButtonRef} aria-label="Continue with Google" />}
       </div>
       <div className="auth-trust-row" aria-label="Nyumbadirect trust features">
         <span><Icon name="verified" /> GPS verified</span>
