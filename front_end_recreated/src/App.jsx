@@ -1,7 +1,9 @@
 import React, {useEffect, useRef, useState} from 'react'
+import {Capacitor} from '@capacitor/core'
 import {Preferences} from '@capacitor/preferences'
 import AppShell from './components/AppShell'
 import {BrandLogoMark, BrandWordmark} from './components/BrandLogo'
+import Splash from './components/Splash'
 import Icon from './components/Icon'
 import {googleLogin, loginUser, registerUser} from './api/nyumbaApi'
 import {installDownloadedPlayUpdate, promptForPlayUpdate} from './mobile/playInAppUpdate'
@@ -14,6 +16,7 @@ const GOOGLE_WEB_CLIENT_ID = import.meta.env.VITE_GOOGLE_WEB_CLIENT_ID || '62008
 export default function App() {
   const [session, setSession] = useState(null)
   const [showAppPromo, setShowAppPromo] = useState(false)
+  const [showNativeSplash, setShowNativeSplash] = useState(() => Capacitor.isNativePlatform())
 
   useEffect(() => {
     let active = true
@@ -51,6 +54,10 @@ export default function App() {
     if (session) localStorage.setItem(appPromoKey(session), 'seen')
     setShowAppPromo(false)
   }
+
+  // Android 12 masks the operating-system splash icon into a circle. Show the
+  // complete SVG logo in the React view instead, after the short native handoff.
+  if (showNativeSplash) return <Splash onDone={() => setShowNativeSplash(false)} />
 
   if (session === null) return null
 

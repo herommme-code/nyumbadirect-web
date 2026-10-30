@@ -1,17 +1,16 @@
 import React, {useEffect} from 'react'
-import {BrandLogoMark, BrandWordmark} from './BrandLogo'
+import {BrandLogoMark} from './BrandLogo'
 
 export default function Splash({onDone}) {
   useEffect(() => {
-    const timer = setTimeout(() => onDone?.(), 3000)
+    const timer = setTimeout(() => onDone?.(), 1200)
     return () => clearTimeout(timer)
   }, [onDone])
 
   return (
-    <main className="splash-screen">
+    <main className="splash-screen splash-screen-native">
       <div className="splash-lockup">
-        <BrandLogoMark size={112} />
-        <BrandWordmark fontSize={34} />
+        <BrandLogoMark size={156} light />
       </div>
     </main>
   )

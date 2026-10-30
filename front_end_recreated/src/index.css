@@ -720,6 +720,11 @@ background:linear-gradient(160deg,var(--soft-cream),var(--light-cream) 45%,var(-
 .splash-lockup{display:grid;
 justify-items:center;
 gap:22px}
+.splash-screen-native{
+min-height:100dvh;
+background:#144a31;
+}
+.splash-screen-native .splash-lockup{gap:0}
 .shell{min-height:100vh;
 display:grid;
 grid-template-columns:250px 1fr;
